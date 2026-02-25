@@ -1,0 +1,9 @@
+{
+  "domain": "pool_comfort",
+  "name": "Pool Comfort",
+  "codeowners": ["@MendyLanda"],
+  "config_flow": true,
+  "documentation": "https://github.com/MendyLanda/ha-pool-comfort",
+  "iot_class": "cloud_polling",
+  "version": "1.0.0"
+}
