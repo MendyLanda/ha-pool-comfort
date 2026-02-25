@@ -4,6 +4,7 @@
   "codeowners": ["@MendyLanda"],
   "config_flow": true,
   "documentation": "https://github.com/MendyLanda/ha-pool-comfort",
+  "issue_tracker": "https://github.com/MendyLanda/ha-pool-comfort/issues",
   "iot_class": "cloud_polling",
   "version": "1.0.0"
 }
