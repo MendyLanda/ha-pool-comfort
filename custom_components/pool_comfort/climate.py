@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+from typing import Any, ClassVar
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -28,6 +29,8 @@ _MODE_TO_HVAC = {
 }
 _HVAC_TO_MODE = {v: k for k, v in _MODE_TO_HVAC.items()}
 
+COMMAND_SETTLE_DELAY = 2
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -49,7 +52,7 @@ class PoolComfortClimate(CoordinatorEntity[PoolComfortCoordinator], ClimateEntit
     _attr_min_temp = 15
     _attr_max_temp = 40
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
-    _attr_hvac_modes = [
+    _attr_hvac_modes: ClassVar[list[HVACMode]] = [
         HVACMode.OFF,
         HVACMode.AUTO,
         HVACMode.COOL,
@@ -126,26 +129,22 @@ class PoolComfortClimate(CoordinatorEntity[PoolComfortCoordinator], ClimateEntit
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is None:
             return
-        await self.hass.async_add_executor_job(
-            self.coordinator.api.set_temp, int(temp)
-        )
+        await self.hass.async_add_executor_job(self.coordinator.set_temp, int(temp))
+        await asyncio.sleep(COMMAND_SETTLE_DELAY)
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new HVAC mode."""
         if hvac_mode == HVACMode.OFF:
-            await self.hass.async_add_executor_job(
-                self.coordinator.api.set_power, False
-            )
+            await self.hass.async_add_executor_job(self.coordinator.set_power, False)
         else:
             # Turn on if currently off
             if self.coordinator.data and self.coordinator.data.get("power") is False:
-                await self.hass.async_add_executor_job(
-                    self.coordinator.api.set_power, True
-                )
+                await self.hass.async_add_executor_job(self.coordinator.set_power, True)
             device_mode = _HVAC_TO_MODE.get(hvac_mode)
             if device_mode is not None:
                 await self.hass.async_add_executor_job(
-                    self.coordinator.api.set_mode, device_mode
+                    self.coordinator.set_mode, device_mode
                 )
+        await asyncio.sleep(COMMAND_SETTLE_DELAY)
         await self.coordinator.async_request_refresh()

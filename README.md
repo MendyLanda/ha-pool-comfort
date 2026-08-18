@@ -2,17 +2,19 @@
 
 Custom Home Assistant integration for **Pool Comfort** heat pump controllers (GalaxyWind/Wotech-based WiFi modules).
 
-Communicates with the device via the cloud relay using the proprietary Alsavo UDP protocol, providing full monitoring and control from Home Assistant.
+Communicates directly over the LAN (recommended) or through the manufacturer's cloud relay using the proprietary Alsavo UDP protocol, providing full monitoring and control from Home Assistant.
 
 ## Features
 
 ### Climate Entity
+
 - **Temperature control** — set target pool temperature (15–40°C)
 - **Mode control** — Auto, Cool, Heat, or Off
 - **Current temperature** — shows water inlet temperature
 - **HVAC action** — shows whether the unit is actively heating, cooling, or idle
 
 ### Temperature Sensors
+
 - Water Inlet Temperature
 - Water Outlet Temperature
 - Ambient Temperature
@@ -22,6 +24,7 @@ Communicates with the device via the cloud relay using the proprietary Alsavo UD
 - EEV Steps (diagnostic)
 
 ### Binary Sensors (Diagnostic)
+
 - Compressor
 - Four-way Valve
 - High/Low Fan Speed
@@ -50,25 +53,30 @@ Communicates with the device via the cloud relay using the proprietary Alsavo UD
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **Pool Comfort**
 3. Enter your device serial number (12 digits, printed on the device label) and password (default: `123456`)
-4. The integration will discover the cloud relay and connect to your device
+4. For local control, enter the heat pump's LAN IP address or hostname. Leave **Host** empty to use cloud mode.
+
+The host can be changed later with **Reconfigure** from the integration's menu. Local mode connects directly to UDP port `1194` and is recommended for faster, internet-independent operation. Reserve the heat pump's address in your router so it does not change.
+
+> **Local compatibility:** Direct control was field-tested on one GalaxyWind `tb` module. Other module firmware revisions may behave differently; clear **Host** to fall back to cloud mode if local authentication fails.
 
 ## How It Works
 
-The integration connects to your heat pump through the manufacturer's cloud relay server. It:
+For every poll or command, the integration opens a fresh authenticated UDP session, performs the operation, and closes the session. It:
 
-1. **Discovers** the cloud relay via the UCC dispatcher protocol
+1. **Connects** directly to the configured LAN host on port `1194`, or discovers the cloud relay when no host is set
 2. **Authenticates** with a 3-step MD5 handshake using your serial number and password
 3. **Polls** device registers every 30 seconds for status updates
-4. **Sends** control commands (temperature, mode, power) through the cloud relay
+4. **Sends** control commands for temperature, mode, and power
+5. **Retries** one failed poll with another fresh session before marking entities unavailable
 
-> **Note:** This integration requires an active internet connection on both Home Assistant and the heat pump's WiFi module, as communication goes through the cloud relay.
+> **Cloud mode:** Both Home Assistant and the heat pump require an active internet connection. Local mode does not require the manufacturer's cloud relay.
 
 ## Requirements
 
 - A Pool Comfort heat pump with a WiFi module (GalaxyWind/Wotech-based)
 - The device serial number (12 digits)
 - Device password (default is `123456`)
-- The heat pump must be connected to the internet
+- Local network access to the heat pump, or internet access for cloud mode
 
 ## Credits
 

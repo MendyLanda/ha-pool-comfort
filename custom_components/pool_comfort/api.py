@@ -9,13 +9,13 @@ Status: Standard Alsavo 16-bit indexed registers via cloud (F4 action=0x08/0x0B)
 Control: F4 action=0x09, SetConfig with type=0x0002000d.
 """
 
+import hashlib
+import logging
+import random
 import socket
 import struct
-import hashlib
-import random
 import time
-import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +41,10 @@ SC_TEMPS = 30        # Status temperatures
 SC_EEV = 31          # EEV config (12 bytes)
 SC_EXTRA = 32        # Extra status
 
+_REQUIRED_STATUS_REGISTERS = frozenset(
+    {SC_CONFIG, SC_TEMP, SC_MODE, SC_POWER}
+)
+
 # Dispatcher/cloud infrastructure
 CLOUD_IE = "47.88.188.100"
 CLOUD_CN = "114.55.34.145"
@@ -58,7 +62,7 @@ def _build_header(hdr, enc, seq, csid, dsid, cmd, payload_len):
 
 def _build_timestamp():
     """Build 8-byte UTC timestamp struct."""
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     return struct.pack(">HBBBBBb", now.year, now.month, now.day,
                        now.hour, now.minute, now.second, 2)
 
@@ -68,7 +72,7 @@ class PoolComfortConnectionError(Exception):
 
 
 class PoolComfort:
-    """Pool Comfort heat pump controller client via cloud relay."""
+    """Pool Comfort heat pump controller client via local or cloud UDP."""
 
     def __init__(self, serial: str, password: str):
         self.serial = serial
@@ -114,7 +118,7 @@ class PoolComfort:
         for ip, port in targets:
             try:
                 sock.sendto(query, (ip, port))
-            except Exception as e:
+            except OSError as e:
                 _LOGGER.debug("Failed to send to %s:%d: %s", ip, port, e)
 
         deadline = time.time() + timeout
@@ -134,7 +138,7 @@ class PoolComfort:
                                      ip, port_val, *addr)
                         sock.close()
                         return ip, port_val
-            except socket.timeout:
+            except TimeoutError:
                 continue
 
         sock.close()
@@ -143,7 +147,7 @@ class PoolComfort:
     # === Connection ===
 
     def connect(self, relay_ip=None, relay_port=None):
-        """Connect to cloud relay and authenticate."""
+        """Connect directly or through the cloud relay and authenticate."""
         if relay_ip and relay_port:
             self.relay_ip = relay_ip
             self.relay_port = relay_port
@@ -178,9 +182,9 @@ class PoolComfort:
     def _recv(self, timeout=5):
         self.sock.settimeout(timeout)
         try:
-            data, addr = self.sock.recvfrom(4096)
+            data, _ = self.sock.recvfrom(4096)
             return data
-        except socket.timeout:
+        except TimeoutError:
             return None
 
     def _recv_all(self, timeout=3):
@@ -192,9 +196,9 @@ class PoolComfort:
                 break
             self.sock.settimeout(max(0.1, remaining))
             try:
-                data, addr = self.sock.recvfrom(4096)
+                data, _ = self.sock.recvfrom(4096)
                 packets.append(data)
-            except socket.timeout:
+            except TimeoutError:
                 break
         return packets
 
@@ -289,20 +293,41 @@ class PoolComfort:
         seq = self._next_seq()
         hdr = _build_header(HDR_REQUEST, 0, seq, self.csid, self.dsid,
                             CMD_DATA, len(payload))
-        self._send(hdr + payload)
+        full_packet = hdr + payload
+        received_any = False
+        missing_registers = _REQUIRED_STATUS_REGISTERS
 
-        packets = self._recv_all(timeout=5)
-        if not packets:
-            self._send(hdr + payload)
+        for _ in range(2):
+            # Never let data from an earlier attempt or session make a failed
+            # read look healthy.
+            self.registers.clear()
+            self._send(full_packet)
             packets = self._recv_all(timeout=5)
+            if not packets:
+                continue
 
-        for data in packets:
-            if len(data) > 20:
-                p = data[16:]
-                if len(p) >= 4 and p[0] in (0x08, 0x0B):
-                    self._parse_alsavo_objects(p)
+            received_any = True
+            for data in packets:
+                if len(data) > 20:
+                    p = data[16:]
+                    if len(p) >= 4 and p[0] in (0x08, 0x0B):
+                        self._parse_alsavo_objects(p)
 
-        return dict(self.registers)
+            missing_registers = (
+                _REQUIRED_STATUS_REGISTERS - self.registers.keys()
+            )
+            if not missing_registers:
+                return dict(self.registers)
+
+        if not received_any:
+            raise PoolComfortConnectionError(
+                "No response from device; the UDP session is stale"
+            )
+        missing = ", ".join(str(sc) for sc in sorted(missing_registers))
+        self.registers.clear()
+        raise PoolComfortConnectionError(
+            f"Incomplete register response; missing registers: {missing}"
+        )
 
     def _parse_alsavo_objects(self, payload):
         if len(payload) < 4:
@@ -405,6 +430,10 @@ class PoolComfort:
                                                 self.csid, self.dsid,
                                                 CMD_DATA, len(ack))
                         self._send(ack_hdr + ack)
+        if not success:
+            _LOGGER.warning(
+                "Device did not acknowledge set command for register %d", sc
+            )
         return success
 
     # === Status Parsing ===
